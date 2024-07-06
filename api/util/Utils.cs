@@ -107,5 +107,18 @@ namespace FlashForgeMonitor.api.util
         return char.ToUpper(input[0]) + input.Substring(1);
     }
     
+    public static double GramsUsed(double meters, GCodeMeta gCodeMeta)
+    {
+        return FilamentMetersToGrams(meters, gCodeMeta.FilamentDiameter, gCodeMeta.FilamentDensity);
+    }
+    
+    private static double FilamentMetersToGrams(double meters, double filamentDiameter, double filamentDensity)
+    {
+        var volume = Math.PI * Math.Pow(filamentDiameter / 2, 2) * meters * 100;
+        var weight = volume * filamentDensity;
+        //return Math.Round(weight, 2);
+        return weight;
+    }
+    
     }
 }

@@ -1,11 +1,13 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
+using FlashForgeMonitor.api.util;
 using Newtonsoft.Json;
 
 namespace FlashForgeMonitor.api.client.klipper
@@ -49,6 +51,8 @@ namespace FlashForgeMonitor.api.client.klipper
         
         //https://moonraker.readthedocs.io/en/latest/web_api/#file-upload
         
+        // file download
+        private const string GCodeDownloadEndpoint = "/server/files/gcodes/";
         
 
         // fans
@@ -61,6 +65,8 @@ namespace FlashForgeMonitor.api.client.klipper
         // temp sensors
         private const string LoadCell = "temperature_sensor Load_Cell";
         private const string TvocLevel = "temperature_sensor TVOC_Level";
+
+        private GCodeMeta _cachedGCodeMeta = null;
 
         
         public MoonrakerClient(string printerIp)
@@ -113,12 +119,54 @@ namespace FlashForgeMonitor.api.client.klipper
             return list;
 
         }
+
+        public async Task<bool> DownloadGCodeFile(string fileName, string outFile)
+        { // download a g-code file from the printer
+            // https://moonraker.readthedocs.io/en/latest/web_api/?h=root#list-registered-roots - parsing the available directories (for handling g-code files located outside the standard folder)
+            // this shouldn't be necessary..
+            var client = new HttpClient();
+            try
+            {
+                Console.WriteLine($"DownloadGCodeFile - Requesting g-code file {fileName} from printer...");
+                var response = await client.GetAsync($"{GCodeDownloadEndpoint}/{fileName}");
+                response.EnsureSuccessStatusCode();
+
+                var gcodeBytes = await response.Content.ReadAsByteArrayAsync();
+                Console.WriteLine("DownloadGCodeFile - Writing g-code file to disk...");
+                File.WriteAllBytes(outFile, gcodeBytes);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"DownloadGCodeFile - Error during download: {ex.StackTrace}");
+                return false;
+            }
+        }
+
+        public async Task<GCodeMeta> GetCurrentFileMeta()
+        { // get the slicer meta data from the current g code file
+            var s = await GetPrintStats();
+            var outFile = Path.Combine(Directory.GetCurrentDirectory(), "temp.gcode");
+            if (await DownloadGCodeFile(s.Filename, outFile))
+            {
+                var meta = new GCodeMeta(outFile);
+                File.Delete(outFile);
+                return meta;
+            }
+            Console.WriteLine("GetCurrentFileMeta error downloading current g-code file");
+            return null;
+        }
+        
+        
         
         public async Task<List<string>> GetMacros()
         { // gets all klipper macros
             var objectList = await GetObjectList();
             return objectList == null ? null : (from obj in objectList where obj.StartsWith("gcode_macro ") select obj.Substring("gcode_macro ".Length)).ToList();
         }
+        
+        // todo getting a list of g-code files stored on the printer
+        // https://moonraker.readthedocs.io/en/latest/web_api/?h=root#list-available-files
 
         private async Task<T> GetQuery<T>(string query) where T : class
         { // get an instance of class from query
@@ -215,6 +263,48 @@ namespace FlashForgeMonitor.api.client.klipper
 
         public async Task<MoonrakerSystemInfo> GetMoonrakerInfo()
         { return await GetType<MoonrakerSystemInfo>(_baseUrl + ServerInfoEndpoint); }
+
+        /// <summary>
+        /// Get the current value of filament grams used, on the current print
+        /// </summary>
+        public async Task<double> GetCurrentFilamentGramsUsed(PrintStats stats = null)
+        {
+            PrintStats s;
+            if (stats == null) s = await GetPrintStats();
+            else s = stats;
+            // use the g-code metadata to get the filament density & diameter, then estimate the grams used from meters used
+            if (_cachedGCodeMeta != null && s.Filename == _cachedGCodeMeta.FileName) return Utils.GramsUsed(s.GetFilamentMetersUsed(), _cachedGCodeMeta);
+            
+            // first request, different file, etc. this function will be called a good amount in UIs, so the less repeated requests to the printer, the better
+            Console.WriteLine("GetCurrentFilamentGramsUsed - no/mismatched g-code meta, requesting current file");
+            var meta = await GetCurrentFileMeta();
+            if (meta == null)
+            {
+                Console.WriteLine("GetCurrentFilamentGramsUsed error, GetCurrentFileMeta returned null");
+                return -1;
+            }
+            _cachedGCodeMeta = meta; // this should really only need to be cached once per print, unless the program is relaunched.
+            return Utils.GramsUsed(s.GetFilamentMetersUsed(), _cachedGCodeMeta);
+        }
+
+        /// <summary>
+        /// Returns the value of filament used in meters & grams, in gramsUsed g | metersUsed m format
+        /// </summary>
+        public async Task<string> GetCurrentFilamentUsedStats()
+        {
+            var stats = await GetPrintStats();
+            if (stats == null)
+            {
+                Console.WriteLine("GetCurrentFilamentUsedStats error, GetPrintStats returned null");
+                return null;
+            }
+            var gramsUsed = await GetCurrentFilamentGramsUsed(stats);
+            var metersUsed = stats.GetFilamentMetersUsed();
+            if (gramsUsed != -1 && metersUsed != -1) return $"{gramsUsed}g | {metersUsed}m";
+            Console.WriteLine("GetCurrentFilamentUsedStats error, bad value for gramsUsed and/or metersUsed");
+            return null;
+        }
+        
 
         private async Task<string> PostEndpoint(string endpoint, string payload)
         { // handle post request to moonraker
@@ -524,11 +614,12 @@ namespace FlashForgeMonitor.api.client.klipper
             [JsonProperty("filament_used")]
             public double FilamentUsed { get; set; }
 
-            public int GetFilamentMetersUsed()
+            public double GetFilamentMetersUsed()
             {
-                return (int)Math.Round(FilamentUsed / 1000);
+                return Math.Round(FilamentUsed, 2);
+                //return (int)Math.Round(FilamentUsed / 1000);
             }
-
+            
             /// <summary>
             /// The current print state. See PrintState
             /// </summary>

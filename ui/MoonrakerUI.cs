@@ -60,7 +60,8 @@ namespace FlashForgeMonitor.ui
                     // populate the ui
                     if (ps != null)
                     {
-                        SetLabel(FilamentUsedLabel, $"Filament used: {ps.GetFilamentMetersUsed()}m");
+                        var fg = await _client.GetCurrentFilamentUsedStats();
+                        SetLabel(FilamentUsedLabel, fg == null ? $"Filament used: err)" : $"Filament used: {fg})");
                         SetLabel(PrintTimeLabel, "Print time: " + TimeSpan.FromSeconds(ps.PrintDuration).ToString(@"hh\:mm"));
                         SetLabel(StatusLabel, $"Status: {ps.State}");
                     }

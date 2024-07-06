@@ -74,6 +74,7 @@
         <Compile Include="api\client\replays\PrintStatus.cs" />
         <Compile Include="api\client\replays\TempInfo.cs" />
         <Compile Include="api\client\FlashForgeTcpClient.cs" />
+        <Compile Include="api\util\GCodeMeta.cs" />
         <Compile Include="api\util\PrinterScanner.cs" />
         <Compile Include="api\util\Utils.cs" />
         <Compile Include="ConnectPrompt.cs">
